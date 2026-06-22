@@ -64,12 +64,32 @@ runs:
       with:
         github-token: ${{ inputs.token }}
         script: |
-          const tag             = context.ref.replace('refs/tags/', '');
+          // Prefer the release payload (always set on release events);
+          // fall back to github.ref for tag-push triggers.
+          const tag = (
+            context.payload.release?.tag_name
+            || context.ref.replace('refs/tags/', '')
+          ).trim();
+          if (!tag) {
+            core.setFailed('Could not determine the release tag: both github.event.release.tag_name and github.ref are empty.');
+            return;
+          }
+
           const mode            = process.env.INPUT_MODE                || 'semver';
           const fallbackPrefix  = process.env.INPUT_TAG_PREFIX          || 'v';
           const prereleaseStrategy = process.env.INPUT_PRERELEASE_STRATEGY || 'skip';
           let dryRun            = process.env.INPUT_DRY_RUN === 'true';
-          const sha             = context.sha;
+
+          // context.sha may also be empty on release events; resolve from the tag as fallback.
+          let sha = context.sha;
+          if (!sha) {
+            const tagRef = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              ref:   `tags/${tag}`,
+            });
+            sha = tagRef.data.object.sha;
+          }
 
           // ── Extract prefix and version ───────────────────────────────────
           // tagPrefix = leading non-digit chars (e.g. "v", "release-", "")
